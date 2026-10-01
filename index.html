@@ -34,6 +34,21 @@
             font-weight: bold;
             color: #333;
         }
+        #muteBtn {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            font-size: 20px;
+            background: #fff;
+            border: 2px solid #333;
+            border-radius: 6px;
+            cursor: pointer;
+            padding: 2px 8px;
+            font-family: inherit;
+        }
+        #muteBtn:hover {
+            background: #eee;
+        }
         #gameOver {
             position: absolute;
             top: 50%;
@@ -73,9 +88,11 @@
     <div id="gameContainer">
         <canvas id="gameCanvas" width="800" height="300"></canvas>
         <div id="score">Score: 0</div>
+        <button id="muteBtn" title="Mute / Unmute (M)">🔊</button>
         <div id="startScreen">
             <h1>Dino Jump</h1>
             <p>Press SPACE or Click to Start</p>
+            <p>M = Mute / Unmute</p>
         </div>
         <div id="gameOver">
             <h1>GAME OVER</h1>
@@ -96,6 +113,103 @@
         let highScore = 0;
         let gameSpeed = 6;
         let frameCount = 0;
+
+        // ===== Sound & Music (Web Audio API, no files needed) =====
+        let audioCtx = null;
+        let soundOn = true;
+        let musicTimer = null;
+        let musicStep = 0;
+        const muteBtn = document.getElementById('muteBtn');
+
+        function ensureAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function tone(freq, dur, type, vol, when, slideTo) {
+            if (!soundOn || !audioCtx) return;
+            const t = audioCtx.currentTime + (when || 0);
+            const osc = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            osc.type = type || 'square';
+            osc.frequency.setValueAtTime(freq, t);
+            if (slideTo) {
+                osc.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+            }
+            g.gain.setValueAtTime(vol || 0.12, t);
+            g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+            osc.connect(g);
+            g.connect(audioCtx.destination);
+            osc.start(t);
+            osc.stop(t + dur + 0.02);
+        }
+
+        // Jump: quick rising swoosh
+        function playJump() {
+            tone(280, 0.18, 'square', 0.10, 0, 720);
+        }
+
+        // Milestone: happy two-note blip every 100 points
+        function playPoint() {
+            tone(880, 0.08, 'sine', 0.14, 0);
+            tone(1318, 0.12, 'sine', 0.12, 0.08);
+        }
+
+        // Game over: descending sad slide
+        function playGameOver() {
+            stopMusic();
+            tone(400, 0.2, 'sawtooth', 0.14, 0, 180);
+            tone(220, 0.45, 'sawtooth', 0.14, 0.18, 70);
+        }
+
+        // Cheerful chiptune loop (melody + bass)
+        const melody = [
+            523, 0, 659, 0, 784, 0, 659, 0,
+            587, 0, 740, 0, 880, 784, 659, 0,
+            523, 0, 659, 0, 784, 0, 880, 0,
+            784, 659, 587, 659, 523, 0, 0, 0
+        ];
+        const bassLine = [131, 131, 165, 165, 196, 196, 165, 165];
+        const STEP_TIME = 0.145;
+
+        function startMusic() {
+            if (musicTimer || !audioCtx) return;
+            musicStep = 0;
+            musicTimer = setInterval(() => {
+                if (!soundOn || !gameRunning) return;
+                const m = melody[musicStep % melody.length];
+                if (m) tone(m, 0.13, 'square', 0.045, 0);
+                if (musicStep % 4 === 0) {
+                    const b = bassLine[(musicStep / 4) % bassLine.length];
+                    tone(b, 0.28, 'triangle', 0.07, 0);
+                }
+                musicStep++;
+            }, STEP_TIME * 1000);
+        }
+
+        function stopMusic() {
+            if (musicTimer) {
+                clearInterval(musicTimer);
+                musicTimer = null;
+            }
+        }
+
+        function toggleMute() {
+            soundOn = !soundOn;
+            muteBtn.textContent = soundOn ? '🔊' : '🔇';
+            if (!soundOn) stopMusic();
+            else if (gameRunning && audioCtx) startMusic();
+        }
+
+        muteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            ensureAudio();
+            toggleMute();
+        });
 
         // Dino properties
         const dino = {
@@ -293,6 +407,11 @@
             score++;
             scoreEl.textContent = 'Score: ' + score;
 
+            // Milestone blip every 100 points
+            if (score % 100 === 0) {
+                playPoint();
+            }
+
             // Increase speed
             if (score % 500 === 0) {
                 gameSpeed += 0.5;
@@ -321,11 +440,13 @@
             if (dino.grounded) {
                 dino.velocityY = dino.jumpForce;
                 dino.grounded = false;
+                playJump();
             }
         }
 
         // Start game
         function startGame() {
+            ensureAudio();
             gameRunning = true;
             score = 0;
             gameSpeed = 6;
@@ -337,11 +458,13 @@
             startScreen.style.display = 'none';
             gameOverScreen.style.display = 'none';
             scoreEl.textContent = 'Score: 0';
+            startMusic();
         }
 
         // Game over
         function gameOver() {
             gameRunning = false;
+            playGameOver();
             if (score > highScore) {
                 highScore = score;
             }
@@ -357,6 +480,9 @@
                 } else {
                     jump();
                 }
+            } else if (e.code === 'KeyM') {
+                ensureAudio();
+                toggleMute();
             }
         });
 
